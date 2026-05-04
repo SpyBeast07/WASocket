@@ -1,0 +1,21 @@
+# Environments
+venv/
+.env
+engine/.env
+infra/.env
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# WhatsApp Session (IMPORTANT: Do not push tokens)
+engine/tokens/
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/
