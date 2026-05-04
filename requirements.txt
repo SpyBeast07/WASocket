@@ -5,3 +5,4 @@ arq==0.26.1
 pydantic-settings==2.5.2
 httpx==0.27.2
 python-dotenv==1.0.1
+watchfiles==0.24.0
