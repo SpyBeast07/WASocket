@@ -66,7 +66,8 @@ async def send_whatsapp_message(ctx, phone: str, message: str, priority: str = "
         )
         engine_duration = time.time() - start_engine_call
         
-        if response.status_code == 200:
+        # OPTIMIZED: Accept 200 (Blocking) or 202 (Fire-and-Forget)
+        if response.status_code in [200, 202]:
             total_latency = time.time() - (queued_at or time.time())
             pickup_delay = start_pickup - (queued_at or start_pickup)
             
