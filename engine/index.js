@@ -89,8 +89,11 @@ app.get('/status', async (req, res) => {
 });
 
 app.get('/session', async (req, res) => {
-  if (!client || !(await client.isConnected())) {
-    return res.status(401).json({ error: 'Client not connected' });
+  if (!client || (connectionStatus !== 'CONNECTED' && connectionStatus !== 'qrRead-SUCCESS')) {
+    const isActuallyConnected = client ? await client.isConnected().catch(() => false) : false;
+    if (!isActuallyConnected) {
+      return res.status(401).json({ error: 'Client not connected', status: connectionStatus });
+    }
   }
 
   try {
@@ -113,8 +116,11 @@ app.post('/send-message', async (req, res) => {
     return res.status(400).json({ error: 'Phone and message are required' });
   }
 
-  if (!client || !(await client.isConnected())) {
-    return res.status(401).json({ error: 'Client not connected' });
+  if (!client || (connectionStatus !== 'CONNECTED' && connectionStatus !== 'qrRead-SUCCESS')) {
+    const isActuallyConnected = client ? await client.isConnected().catch(() => false) : false;
+    if (!isActuallyConnected) {
+      return res.status(401).json({ error: 'Client not connected', status: connectionStatus });
+    }
   }
 
   try {
@@ -138,6 +144,14 @@ app.post('/send-message', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Heartbeat to monitor connection health
+setInterval(async () => {
+  if (client) {
+    const isConnected = await client.isConnected().catch(() => false);
+    console.log(`[Heartbeat] Status: ${connectionStatus} | Connected: ${isConnected}`);
+  }
+}, 30000);
 
 app.listen(port, () => {
   console.log(`Engine listening at http://localhost:${port}`);

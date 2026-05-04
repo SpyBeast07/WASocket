@@ -69,6 +69,7 @@ async def get_metrics():
 
 @app.post("/send")
 async def send_message(payload: MessageRequest):
+    start_enqueue = time.time()
     job = await redis_pool.enqueue_job(
         "send_whatsapp_message",
         phone=payload.phone,
@@ -77,12 +78,14 @@ async def send_message(payload: MessageRequest):
         priority=payload.priority,
         queued_at=time.time()
     )
+    enqueue_duration = time.time() - start_enqueue
     
     return {
         "success": True,
         "job_id": job.job_id,
         "priority": payload.priority,
-        "queued_at": time.time()
+        "queued_at": time.time(),
+        "enqueue_latency_ms": round(enqueue_duration * 1000, 2)
     }
 
 if __name__ == "__main__":
