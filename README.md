@@ -1,69 +1,93 @@
 # WASocket
 
-A thin REST API wrapper over a single WhatsApp Web session.
+A high-performance, containerized WhatsApp API gateway built with FastAPI, Node.js (WPPConnect), and Redis.
 
 ## 🧠 Architecture
 
 ```text
-FastAPI (API layer)
+Public Traffic (HTTPS/8083)
     ↓
-Redis (queue + state)
+Caddy (Reverse Proxy)
     ↓
-Worker (Python async)
+FastAPI (Security + Logic)
     ↓
-Node Engine (WPPConnect)
+Redis (Reliable Queue)
+    ↓
+Python Worker (Smart Retry + Rate Limiting)
+    ↓
+Node Engine (WPPConnect / Chromium)
     ↓
 WhatsApp WebSocket
 ```
 
-## 🧱 Folders
+## ✨ Key Features
 
-- `api/`: FastAPI application.
-- `worker/`: Python async worker for queue processing.
-- `engine/`: Node.js WPPConnect engine (Isolated service).
-- `infra/`: Redis configurations and infrastructure settings.
-- `shared/`: Shared Pydantic schemas and models.
+- **Docker-First**: One-command deployment with `docker-compose`.
+- **High Reliability**: Automatic session recovery and smart worker retries.
+- **Secure**: Protected by API Key (`x-api-key` header).
+- **Observable**: Centralized health monitoring and structured logging.
+- **Persistent**: WhatsApp sessions are preserved across restarts.
 
-## 🚀 Getting Started
+## 🚀 Quick Start
 
-### 1. Prerequisites
-- Python 3.10+
-- Node.js v18+
-- Redis (running locally or via Docker)
-- pnpm (recommended for Node)
+### 1. Configure
+Copy the environment template and set your secret API key:
+```bash
+cp .env.example .env
+# Edit .env and set your API_KEY
+```
 
-### 2. Setup
-1. **Infrastructure**:
-   ```bash
-   cd infra
-   docker-compose up -d
-   ```
-2. **Node Engine**:
-   ```bash
-   cd engine
-   pnpm install
-   cp .env.example .env # Update if necessary
-   pnpm start
-   ```
-   *Scan the QR code printed in the terminal.*
+### 2. Deploy
+Start the entire stack using Docker Compose:
+```bash
+docker-compose up -d --build
+```
 
-3. **Python API & Worker**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   # Start API
-   uvicorn api.main:app --reload
-   # Start Worker (in another terminal)
-   python worker/main.py
-   ```
+### 3. Authenticate
+View the logs to scan the WhatsApp QR code:
+```bash
+docker-compose logs -f engine
+```
+*Scan the generated QR code with your phone.*
 
-## 🛠️ Internal API (Engine)
-- `GET /status`: Connection and QR code status.
-- `GET /session`: Logged-in device info.
-- `POST /send-message`: Send a text message.
+## 🔒 Security
+All API requests must include the following header:
+`x-api-key: your-secret-key`
+
+## 📡 API Endpoints
+
+### Send Message
+`POST /send`
+```json
+{
+  "phone": "919999999999",
+  "message": "Hello from WASocket!",
+  "priority": "high"
+}
+```
+
+### System Health
+`GET /health`
+Returns the status of the API, Worker, Engine, and Queue lengths.
+
+## 🛠️ Components
+
+- `api/`: FastAPI gateway.
+- `worker/`: Background job processor with rate limiting.
+- `engine/`: Node.js WhatsApp engine (WPPConnect).
+- `infra/`: Caddy reverse proxy configuration.
+- `shared/`: Common schemas and models.
+
+## ⚙️ Configuration (.env)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `API_KEY` | Secret key for API access | `wasocket-secret-key` |
+| `SESSION_NAME` | WhatsApp session identifier | `wasocket_session` |
+| `REDIS_URL` | Redis connection string | `redis://redis:6379` |
+| `ENGINE_URL` | Engine connection string | `http://engine:3000` |
 
 ## ⚠️ Important Notes
-- The engine uses a protocol-based communication (headless).
-- All communications from the API to WhatsApp are queued via Redis.
-- Session is persisted in `engine/tokens/`.
+- **Rate Limiting**: Default is set to 60 messages per minute to prevent account flagging.
+- **Session Persistence**: Sessions are stored in the `engine-tokens` Docker volume.
+- **Headless Mode**: The engine runs Chromium in headless mode within the container.
