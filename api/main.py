@@ -1,7 +1,8 @@
 import time
 import logging
 import httpx
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, Depends, HTTPException, status
+from fastapi.security import APIKeyHeader
 from arq import create_pool
 from arq.connections import RedisSettings
 from shared.schemas import MessageRequest, MessagePriority
@@ -13,17 +14,35 @@ logger = logging.getLogger("api")
 
 app = FastAPI(title="WASocket API")
 
-# Redis pool for arq
+# Security
+api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
+
+async def get_api_key(api_key: str = Depends(api_key_header)):
+    if api_key != settings.api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API Key",
+        )
+    return api_key
 redis_pool = None
 http_client = None
 
 @app.on_event("startup")
 async def startup():
     global redis_pool, http_client
-    # Use default RedisSettings
-    redis_pool = await create_pool(RedisSettings())
+    # Parse redis_url for RedisSettings
+    from urllib.parse import urlparse
+    logger.info(f"Connecting to Redis using URL: {settings.redis_url}")
+    u = urlparse(settings.redis_url)
+    redis_settings = RedisSettings(
+        host=u.hostname or "localhost",
+        port=u.port or 6379,
+        password=u.password
+    )
+    
+    redis_pool = await create_pool(redis_settings)
     http_client = httpx.AsyncClient(timeout=5.0)
-    logger.info("API Started | Redis and HTTP Client Initialized")
+    logger.info(f"API Started | Connected to Redis at {u.hostname}:{u.port or 6379}")
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -113,7 +132,7 @@ async def get_metrics():
         "timestamp": time.time()
     }
 
-@app.post("/send")
+@app.post("/send", dependencies=[Depends(get_api_key)])
 async def send_message(payload: MessageRequest):
     start_enqueue = time.time()
     job = await redis_pool.enqueue_job(

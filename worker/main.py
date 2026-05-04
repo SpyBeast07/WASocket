@@ -8,6 +8,7 @@ from arq.connections import RedisSettings
 from arq.worker import Retry
 from api.config import settings
 from shared.schemas import MessagePriority
+from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(
@@ -15,6 +16,15 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("worker")
+
+# Parse redis_url for WorkerSettings
+logger.info(f"Worker connecting to Redis using URL: {settings.redis_url}")
+u = urlparse(settings.redis_url)
+worker_redis_settings = RedisSettings(
+    host=u.hostname or "localhost",
+    port=u.port or 6379,
+    password=u.password
+)
 
 # Rate Limit Config
 RATE_LIMIT_MPM = 60
@@ -65,8 +75,8 @@ async def send_whatsapp_message(ctx, phone: str, message: str, priority: str = "
     if priority == MessagePriority.HIGH:
         pass # Zero artificial delay for High Priority
     else:
-        # Pacing for stability
-        await asyncio.sleep(random.uniform(1.0, 2.0))
+        # Reduced pacing for better throughput
+        await asyncio.sleep(random.uniform(0.2, 0.5))
     
     # 3. Execution (Persistent Connection)
     try:
@@ -74,21 +84,19 @@ async def send_whatsapp_message(ctx, phone: str, message: str, priority: str = "
         response = await client.post(
             f"{settings.engine_url}/send-message",
             json={"phone": phone, "message": message},
-            timeout=10.0 # Low timeout for stability
+            timeout=10.0
         )
         response.raise_for_status()
         engine_duration = time.time() - start_engine_call
         
-        # OPTIMIZED: Accept 200 (Blocking) or 202 (Fire-and-Forget)
-        if response.status_code in [200, 202]:
-            total_latency = time.time() - (queued_at or time.time())
-            pickup_delay = start_pickup - (queued_at or start_pickup)
-            
-            logger.info(
-                f"[Job {job_id}] SENT | Phone: {phone} | Priority: {priority} | "
-                f"Latency: {total_latency:.2f}s (Pickup: {pickup_delay:.2f}s, Engine: {engine_duration:.2f}s)"
-            )
-            return response.json()
+        total_latency = time.time() - (queued_at or time.time())
+        pickup_delay = start_pickup - (queued_at or start_pickup)
+        
+        logger.info(
+            f"[Job {job_id}] DISPATCHED | Phone: {phone} | Priority: {priority} | "
+            f"Latency: {total_latency:.2f}s (Pickup: {pickup_delay:.2f}s, Engine: {engine_duration:.2f}s)"
+        )
+        return response.json()
 
     except httpx.HTTPStatusError as exc:
         status_code = exc.response.status_code
@@ -145,11 +153,11 @@ async def on_job_failure(ctx, exc):
 
 class WorkerSettings:
     functions = [send_whatsapp_message]
-    redis_settings = RedisSettings()
+    redis_settings = worker_redis_settings
     queues = ('arq:queue:high', 'arq:queue')
     max_jobs = 1 # Keep sequential for single-session stability
     job_timeout = 30
-    max_retries = 2 # Max 2 retries (3 attempts total)
+    max_retries = 10 # Allow more retries during engine restarts
     on_startup = startup
     on_shutdown = shutdown
     on_job_error = on_job_failure

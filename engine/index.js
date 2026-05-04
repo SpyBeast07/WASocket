@@ -20,6 +20,7 @@ let qrCode = null;
 let lastSuccessfulSendTimestamp = 0;
 let consecutiveFailureCount = 0;
 let isReconnecting = false;
+let lastConnectionTimestamp = 0;
 const STALE_THRESHOLD_MS = 60000;
 
 function logEvent(event, details = {}) {
@@ -47,6 +48,7 @@ async function start() {
     });
 
     console.log('WhatsApp Client Initialized');
+    lastConnectionTimestamp = Date.now();
     setupClientEvents(client);
   } catch (error) {
     console.error('Error starting WPPConnect:', error);
@@ -148,32 +150,20 @@ app.post('/send-message', async (req, res) => {
 
   const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
 
-  // 2. FIRE-AND-FORGET EXECUTION (ULTRA-LOW LATENCY)
   if (fireAndForget) {
-    // We initiate the send and return 202 ACCEPTED immediately
     client.sendText(formattedPhone, message)
-      .then(() => {
-        lastSuccessfulSendTimestamp = Date.now();
-        consecutiveFailureCount = 0;
-      })
-      .catch((err) => {
-        consecutiveFailureCount++;
-        console.error('[Async Error] Send failed:', err.message);
-        if (consecutiveFailureCount >= 3) triggerSoftRecovery();
-      });
+      .then(() => { lastSuccessfulSendTimestamp = Date.now(); })
+      .catch((err) => { console.error('[Async Error] Send attempt:', err.message); });
 
     return res.status(202).json({ success: true, mode: 'fire-and-forget' });
   }
 
-  // Standard Blocking Path (for when user NEEDS result object)
+  // Standard Path
   try {
-    const result = await client.sendText(formattedPhone, message);
+    client.sendText(formattedPhone, message).catch(e => console.error('Send error:', e.message));
     lastSuccessfulSendTimestamp = Date.now();
-    consecutiveFailureCount = 0;
-    res.json({ success: true, result });
+    res.json({ success: true, note: 'Message dispatched' });
   } catch (error) {
-    consecutiveFailureCount++;
-    if (consecutiveFailureCount >= 3) triggerSoftRecovery();
     res.status(500).json({ error: error.message });
   }
 });
@@ -189,7 +179,7 @@ setInterval(async () => {
   }
 }, 30000);
 
-app.listen(port, () => {
-  console.log(`Engine listening at http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Engine listening at http://0.0.0.0:${port}`);
   start();
 });
