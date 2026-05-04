@@ -34,6 +34,18 @@ async def check_rate_limit(redis):
     await redis.zadd(RATE_LIMIT_KEY, {str(time.time()): current_time})
     return True
 
+async def worker_heartbeat(redis):
+    """
+    Updates a heartbeat key in Redis to signal worker health.
+    """
+    while True:
+        try:
+            await redis.setex("wasocket:worker_heartbeat", 60, str(time.time()))
+            await asyncio.sleep(30)
+        except Exception as e:
+            logger.error(f"Heartbeat failed: {e}")
+            await asyncio.sleep(10)
+
 async def send_whatsapp_message(ctx, phone: str, message: str, priority: str = "default", metadata: dict = None, queued_at: float = None):
     """
     AUDITED: Low-latency execution pipeline.
@@ -64,6 +76,7 @@ async def send_whatsapp_message(ctx, phone: str, message: str, priority: str = "
             json={"phone": phone, "message": message},
             timeout=10.0 # Low timeout for stability
         )
+        response.raise_for_status()
         engine_duration = time.time() - start_engine_call
         
         # OPTIMIZED: Accept 200 (Blocking) or 202 (Fire-and-Forget)
@@ -76,15 +89,31 @@ async def send_whatsapp_message(ctx, phone: str, message: str, priority: str = "
                 f"Latency: {total_latency:.2f}s (Pickup: {pickup_delay:.2f}s, Engine: {engine_duration:.2f}s)"
             )
             return response.json()
-        else:
-            logger.error(f"[Job {job_id}] ENGINE ERROR {response.status_code}: {response.text}")
-            raise Retry(defer=retry_count * 2)
 
-    except (httpx.RequestError, Retry) as exc:
-        if isinstance(exc, Retry):
-            raise exc
-        logger.error(f"[Job {job_id}] TRANSPORT ERROR: {exc}")
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        error_text = exc.response.text
+        
+        # PERMANENT ERRORS (Don't retry)
+        if status_code == 400:
+            logger.error(f"[Job {job_id}] PERMANENT ERROR {status_code}: {error_text}")
+            return {"success": False, "error": error_text, "permanent": True}
+        
+        # TEMPORARY ERRORS (Retry)
+        logger.warning(f"[Job {job_id}] TEMPORARY ENGINE ERROR {status_code}. Retrying...")
+        raise Retry(defer=retry_count * 2)
+
+    except (httpx.RequestError, asyncio.TimeoutError) as exc:
+        logger.warning(f"[Job {job_id}] TRANSPORT ERROR: {exc}. Retrying...")
         raise Retry(defer=5)
+    
+    except Retry as exc:
+        raise exc
+    
+    except Exception as exc:
+        logger.error(f"[Job {job_id}] UNEXPECTED ERROR: {exc}")
+        # Let on_job_failure handle it
+        raise exc
 
 async def startup(ctx):
     # STEP 1: Persistent Connection Pooling
@@ -92,9 +121,15 @@ async def startup(ctx):
         timeout=10.0,
         limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
     )
-    logger.info("High-Performance Worker Started | HTTP Connection Pooling Active")
+    
+    # STEP 2: Heartbeat Task
+    ctx['heartbeat_task'] = asyncio.create_task(worker_heartbeat(ctx['redis']))
+    
+    logger.info("High-Performance Worker Started | Heartbeat Active")
 
 async def shutdown(ctx):
+    if 'heartbeat_task' in ctx:
+        ctx['heartbeat_task'].cancel()
     await ctx['http_client'].aclose()
     logger.info("Worker Gracefully Shut Down")
 
@@ -114,7 +149,7 @@ class WorkerSettings:
     queues = ('arq:queue:high', 'arq:queue')
     max_jobs = 1 # Keep sequential for single-session stability
     job_timeout = 30
-    max_retries = 3
+    max_retries = 2 # Max 2 retries (3 attempts total)
     on_startup = startup
     on_shutdown = shutdown
     on_job_error = on_job_failure

@@ -1,5 +1,6 @@
 import time
 import logging
+import httpx
 from fastapi import FastAPI, Request, Response
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -14,18 +15,22 @@ app = FastAPI(title="WASocket API")
 
 # Redis pool for arq
 redis_pool = None
+http_client = None
 
 @app.on_event("startup")
 async def startup():
-    global redis_pool
+    global redis_pool, http_client
     # Use default RedisSettings
     redis_pool = await create_pool(RedisSettings())
-    logger.info("Connected to Redis for task queueing")
+    http_client = httpx.AsyncClient(timeout=5.0)
+    logger.info("API Started | Redis and HTTP Client Initialized")
 
 @app.on_event("shutdown")
 async def shutdown():
     if redis_pool:
         await redis_pool.close()
+    if http_client:
+        await http_client.aclose()
 
 # Logging Middleware
 @app.middleware("http")
@@ -41,11 +46,52 @@ async def log_requests(request: Request, call_next):
 
 @app.get("/health")
 async def health_check():
-    return {
+    health = {
         "status": "ok",
-        "service": "api",
-        "redis_connected": redis_pool is not None
+        "timestamp": time.time(),
+        "services": {
+            "api": "CONNECTED",
+            "engine": "UNKNOWN",
+            "worker": "UNKNOWN"
+        },
+        "queue": {
+            "high": 0,
+            "default": 0
+        }
     }
+
+    # 1. Check Engine
+    try:
+        resp = await http_client.get(f"{settings.engine_url}/status")
+        if resp.status_code == 200:
+            engine_data = resp.json()
+            health["services"]["engine"] = engine_data.get("status", "CONNECTED")
+        else:
+            health["services"]["engine"] = "ERROR"
+    except Exception:
+        health["services"]["engine"] = "DISCONNECTED"
+
+    # 2. Check Worker Heartbeat
+    if redis_pool:
+        heartbeat = await redis_pool.get("wasocket:worker_heartbeat")
+        if heartbeat:
+            last_heartbeat = float(heartbeat)
+            if time.time() - last_heartbeat < 60:
+                health["services"]["worker"] = "CONNECTED"
+            else:
+                health["services"]["worker"] = "STALE"
+        else:
+            health["services"]["worker"] = "DISCONNECTED"
+
+        # 3. Queue Size
+        health["queue"]["high"] = await redis_pool.zcard("arq:queue:high")
+        health["queue"]["default"] = await redis_pool.zcard("arq:queue")
+
+    # Overall Status
+    if any(s in ["DISCONNECTED", "ERROR"] for s in health["services"].values()):
+        health["status"] = "degraded"
+    
+    return health
 
 @app.get("/metrics")
 async def get_metrics():

@@ -19,7 +19,13 @@ let qrCode = null;
 // RELIABILITY & PERFORMANCE TRACKING
 let lastSuccessfulSendTimestamp = 0;
 let consecutiveFailureCount = 0;
+let isReconnecting = false;
 const STALE_THRESHOLD_MS = 60000;
+
+function logEvent(event, details = {}) {
+  const timestamp = new Date().toISOString();
+  console.log(JSON.stringify({ timestamp, event, ...details }));
+}
 
 async function start() {
   try {
@@ -50,43 +56,77 @@ async function start() {
 
 function setupClientEvents(client) {
   client.onStateChange((state) => {
-    console.log('[Event] State changed: ', state);
-    connectionStatus = state;
-  });
+    logEvent('CONNECTION_STATE_CHANGE', { state });
+    
+    // Map states
+    if (['CONNECTED', 'PAIRING', 'OPENING'].includes(state)) {
+      connectionStatus = state;
+    } else if (['CONFLICT', 'UNPAIRED', 'UNLAUNCHED', 'UNINITIALIZED'].includes(state)) {
+      connectionStatus = 'AUTH_REQUIRED';
+    } else {
+      connectionStatus = 'DISCONNECTED';
+    }
 
-  client.onStreamChange((state) => {
-    if (state === 'DISCONNECTED' || state === 'SYNCING') {
-        connectionStatus = state;
+    // Auto-recovery for temporary disconnections
+    if (connectionStatus === 'DISCONNECTED' && !isReconnecting) {
+      logEvent('RECOVERY_TRIGGERED', { reason: 'State changed to DISCONNECTED' });
+      triggerSoftRecovery();
     }
   });
 
-  // ASYNC ACK HANDLING (Non-blocking)
+  client.onStreamChange((state) => {
+    logEvent('STREAM_STATE_CHANGE', { state });
+    if (state === 'DISCONNECTED') {
+      if (!isReconnecting) triggerSoftRecovery();
+    }
+  });
+
   client.onAck((ack) => {
-    // Optionally log or store ACKs in Redis/DB for status tracking
-    // This is separated from the send path to keep latency low
+    // Separation of concerns: ACKs handled asynchronously
   });
 }
 
 async function triggerSoftRecovery() {
-    if (client) {
-        try {
-            await client.close();
-            client = null;
-            connectionStatus = 'RECONNECTING';
-            start();
-        } catch (e) {}
+    if (isReconnecting) return;
+    isReconnecting = true;
+    
+    logEvent('RECOVERY_START', { session: sessionName });
+    
+    try {
+        if (client) {
+          await client.close().catch(() => {});
+          client = null;
+        }
+        connectionStatus = 'RECONNECTING';
+        
+        // Wait 5 seconds before retrying to avoid tight loops
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        await start();
+    } catch (e) {
+        logEvent('RECOVERY_FAILED', { error: e.message });
+    } finally {
+        isReconnecting = false;
+        logEvent('RECOVERY_END');
     }
 }
 
 // API Endpoints
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'engine', failures: consecutiveFailureCount });
+  res.json({ 
+    status: 'ok', 
+    service: 'engine', 
+    engine_status: connectionStatus,
+    failures: consecutiveFailureCount 
+  });
 });
 
 app.get('/status', async (req, res) => {
-  let isConnected = connectionStatus === 'CONNECTED';
-  res.json({ status: connectionStatus, connected: isConnected });
+  res.json({ 
+    status: connectionStatus, 
+    connected: connectionStatus === 'CONNECTED',
+    qr_code: connectionStatus === 'AUTH_REQUIRED' ? qrCode : null
+  });
 });
 
 app.post('/send-message', async (req, res) => {
@@ -141,7 +181,11 @@ app.post('/send-message', async (req, res) => {
 setInterval(async () => {
   if (client && connectionStatus === 'CONNECTED') {
     const isActuallyConnected = await client.isConnected().catch(() => false);
-    if (!isActuallyConnected) connectionStatus = 'DISCONNECTED';
+    if (!isActuallyConnected) {
+      logEvent('HEALTH_CHECK_FAILED', { reason: 'client.isConnected() returned false' });
+      connectionStatus = 'DISCONNECTED';
+      triggerSoftRecovery();
+    }
   }
 }, 30000);
 
