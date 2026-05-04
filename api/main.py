@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI, Request, Response
 from arq import create_pool
 from arq.connections import RedisSettings
-from shared.schemas import MessageRequest
+from shared.schemas import MessageRequest, MessagePriority
 from api.config import settings
 
 # Configure logging
@@ -18,8 +18,7 @@ redis_pool = None
 @app.on_event("startup")
 async def startup():
     global redis_pool
-    # Parse redis_url or use default RedisSettings
-    # For now, we'll use a direct DSN if supported by your arq version or default
+    # Use default RedisSettings
     redis_pool = await create_pool(RedisSettings())
     logger.info("Connected to Redis for task queueing")
 
@@ -48,20 +47,41 @@ async def health_check():
         "redis_connected": redis_pool is not None
     }
 
+@app.get("/metrics")
+async def get_metrics():
+    """
+    Exposes basic metrics about the queue lengths.
+    """
+    if not redis_pool:
+        return {"error": "Redis not connected"}
+    
+    # arq uses zsets for queues
+    high_queue_len = await redis_pool.zcard("arq:queue:high") if hasattr(redis_pool, 'zcard') else "unknown"
+    default_queue_len = await redis_pool.zcard("arq:queue")
+    
+    return {
+        "queue_length": {
+            "high": high_queue_len,
+            "default": default_queue_len
+        },
+        "timestamp": time.time()
+    }
+
 @app.post("/send")
 async def send_message(payload: MessageRequest):
-    # Push task to Redis
-    # The task name 'send_whatsapp_message' will be handled by the worker in Phase 3
     job = await redis_pool.enqueue_job(
         "send_whatsapp_message",
         phone=payload.phone,
         message=payload.message,
-        metadata=payload.metadata
+        metadata=payload.metadata,
+        priority=payload.priority,
+        queued_at=time.time()
     )
     
     return {
         "success": True,
         "job_id": job.job_id,
+        "priority": payload.priority,
         "queued_at": time.time()
     }
 
