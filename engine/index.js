@@ -32,7 +32,7 @@ async function start() {
   try {
     client = await wppconnect.create({
       session: sessionName,
-      autoClose: 600000, // 10 minutes of inactivity before closing (WPPConnect default is often 180s)
+      autoClose: false, // Completely disable auto-close
       disableWelcome: true,
       catchQR: (base64Qrimg, asciiQR, attempts, urlCode) => {
         qrCode = urlCode;
@@ -78,11 +78,11 @@ function setupClientEvents(client) {
     logEvent('CONNECTION_STATE_CHANGE', { state });
     
     // Map states
-    if (['CONNECTED', 'PAIRING', 'OPENING'].includes(state)) {
-      connectionStatus = state;
+    if (['CONNECTED', 'PAIRING', 'OPENING', 'SYNCING'].includes(state)) {
+      connectionStatus = 'CONNECTED'; // Treat all these as "working" for the API
     } else if (['CONFLICT', 'UNPAIRED', 'UNLAUNCHED', 'UNINITIALIZED'].includes(state)) {
       connectionStatus = 'AUTH_REQUIRED';
-    } else {
+    } else if (state === 'DISCONNECTED') {
       connectionStatus = 'DISCONNECTED';
     }
 
