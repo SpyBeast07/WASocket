@@ -108,6 +108,10 @@ async def send_whatsapp_message(ctx, phone: str, message: str, priority: str = "
             return {"success": False, "error": error_text, "permanent": True}
         
         # TEMPORARY ERRORS (Retry)
+        if status_code == 503:
+            logger.info(f"[Job {job_id}] SESSION INITIALIZING. Retrying in 5s...")
+            raise Retry(defer=5)
+            
         logger.warning(f"[Job {job_id}] TEMPORARY ENGINE ERROR {status_code}. Retrying...")
         raise Retry(defer=retry_count * 2)
 

@@ -14,9 +14,10 @@ app.use(cors());
 app.use(express.json());
 
 let client = null;
-let connectionStatus = 'DISCONNECTED';
+let connectionStatus = 'DISCONNECTED'; // DISCONNECTED, CONNECTING, CONNECTED
 let qrCode = null;
 let lastSuccessfulSendTimestamp = 0;
+let isReady = false;
 
 function logEvent(event, details = {}) {
   const timestamp = new Date().toISOString();
@@ -27,13 +28,13 @@ async function start() {
   logEvent('ENGINE_STARTUP', {
       free_mem: Math.round(os.freemem() / 1024 / 1024) + 'MB',
       total_mem: Math.round(os.totalmem() / 1024 / 1024) + 'MB',
-      cores: os.cpus().length,
-      platform: os.platform(),
-      arch: os.arch()
+      cores: os.cpus().length
   });
 
+  isReady = false;
+  connectionStatus = 'CONNECTING';
+
   try {
-    // Robust launch for resource-rich environments
     client = await wppconnect.create({
       session: sessionName,
       autoClose: 0, 
@@ -43,17 +44,17 @@ async function start() {
       headless: 'new',
       debug: false,
       logQR: true,
+      whatsappVersion: '2.3000.1015901391', // Pin to a known stable version
       catchQR: (base64Qrimg, asciiQR, attempts, urlCode) => {
         qrCode = urlCode;
         logEvent('QR_RECEIVED', { attempt: attempts });
-        console.log(asciiQR);
       },
       statusFind: (statusSession) => {
         logEvent('STATUS_FIND', { status: statusSession });
-        if (['isLogged', 'qrReadSuccess'].includes(statusSession)) {
-          connectionStatus = 'CONNECTED';
-        } else if (['browserClose', 'autocloseCalled', 'disconnectedMobile'].includes(statusSession)) {
-          connectionStatus = 'DISCONNECTED';
+        if (['isLogged', 'qrReadSuccess', 'inChat'].includes(statusSession)) {
+          // Don't set CONNECTED here, let onStateChange handle the final transition
+          // but ensure we are not in DISCONNECTED
+          if (connectionStatus === 'DISCONNECTED') connectionStatus = 'CONNECTING';
         }
       },
       puppeteerOptions: {
@@ -62,21 +63,29 @@ async function start() {
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
-          '--disable-gpu', // Keep disabled for stability in Docker unless specifically needed
+          '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-extensions',
           '--disable-features=site-per-process,IsolateOrigins',
           '--no-first-run',
           '--no-zygote',
-          '--window-size=1920,1080',
-          '--disable-notifications',
-          '--disable-remote-fonts',
-          '--hide-scrollbars'
+          '--window-size=1920,1080'
         ],
       }
     });
 
     logEvent('CLIENT_INITIALIZED');
+    
+    // Forward browser console logs to container logs for diagnosis
+    if (client.page) {
+        client.page.on('console', msg => {
+            const text = msg.text();
+            if (text.includes('WPP') || text.includes('error')) {
+                console.log(`[Browser] ${text}`);
+            }
+        });
+    }
+
     setupClientEvents(client);
   } catch (error) {
     console.error('Error starting WPPConnect:', error);
@@ -85,58 +94,34 @@ async function start() {
 }
 
 function setupClientEvents(client) {
-  client.onStateChange((state) => {
+  client.onStateChange(async (state) => {
     logEvent('CONNECTION_STATE_CHANGE', { state });
-    if (['CONNECTED', 'PAIRING', 'OPENING', 'SYNCING'].includes(state)) {
+    
+    if (state === 'CONNECTED') {
       connectionStatus = 'CONNECTED';
+      logEvent('SESSION_CONNECTED_WARMING_UP');
+      // Grace period for encryption keys to initialize
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      isReady = true;
+      logEvent('SESSION_READY_TO_SEND');
+    } else if (['PAIRING', 'OPENING', 'SYNCING'].includes(state)) {
+      connectionStatus = 'CONNECTING';
+      isReady = false;
     } else {
-      connectionStatus = 'AUTH_REQUIRED';
+      connectionStatus = 'DISCONNECTED';
+      isReady = false;
     }
   });
 
-  // Reconnection logic if browser crashes
   if (client.page && client.page.browser()) {
       client.page.browser().on('disconnected', () => {
           logEvent('BROWSER_DISCONNECTED');
+          isReady = false;
           connectionStatus = 'DISCONNECTED';
-          // Wait and restart
           setTimeout(() => start(), 5000);
       });
   }
 }
-
-// API Endpoints
-app.get('/screenshot', async (req, res) => {
-    if (!client || !client.page) return res.status(404).json({ error: 'Browser not active' });
-    try {
-        // High quality PNG for resource-rich environments
-        const screenshot = await client.page.screenshot({ 
-            type: 'png', 
-            fullPage: true 
-        });
-        res.set('Content-Type', 'image/png');
-        res.send(screenshot);
-    } catch (e) {
-        logEvent('SCREENSHOT_ERROR', { error: e.message });
-        res.status(500).json({ error: e.message });
-    }
-});
-
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    engine_status: connectionStatus,
-    free_mem: Math.round(os.freemem() / 1024 / 1024) + 'MB',
-    total_mem: Math.round(os.totalmem() / 1024 / 1024) + 'MB'
-  });
-});
-
-app.get('/status', (req, res) => {
-  res.json({ 
-    status: connectionStatus, 
-    qr_code: connectionStatus === 'AUTH_REQUIRED' ? qrCode : null
-  });
-});
 
 app.post('/send-message', async (req, res) => {
   const { phone, message } = req.body;
@@ -144,17 +129,21 @@ app.post('/send-message', async (req, res) => {
 
   if (!phone || !message) return res.status(400).json({ error: 'Missing data' });
   
-  if (connectionStatus !== 'CONNECTED') {
-    logEvent('SEND_MESSAGE_FAILED', { reason: 'not_connected', status: connectionStatus });
-    return res.status(401).json({ error: 'Client not connected' });
+  if (!isReady) {
+    logEvent('SEND_MESSAGE_FAILED', { reason: 'not_ready', status: connectionStatus });
+    return res.status(503).json({ error: 'Session initializing, please wait' });
   }
 
   try {
     const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
     logEvent('SEND_MESSAGE_START', { formattedPhone });
     
-    // Use waitForAck: false to just ensure the message is dispatched to WhatsApp
-    // without waiting for delivery confirmation which can be flaky.
+    // Extra safety: check if WPP is actually injected and ready
+    const isActuallyConnected = await client.isConnected();
+    if (!isActuallyConnected) {
+        throw new Error('WPP reported not connected during dispatch');
+    }
+
     await Promise.race([
         client.sendText(formattedPhone, message, { waitForAck: false }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Send timeout')), 25000))
@@ -165,8 +154,33 @@ app.post('/send-message', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     logEvent('SEND_MESSAGE_ERROR', { error: error.message, phone });
+    // If we get an encryption error, mark as not ready briefly
+    if (error.message.includes('EncryptionKey')) {
+        isReady = false;
+        setTimeout(() => { isReady = true; }, 5000);
+    }
     res.status(500).json({ error: error.message });
   }
+});
+
+app.get('/screenshot', async (req, res) => {
+    if (!client || !client.page) return res.status(404).json({ error: 'Browser not active' });
+    try {
+        const screenshot = await client.page.screenshot({ type: 'png', fullPage: true });
+        res.set('Content-Type', 'image/png');
+        res.send(screenshot);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    engine_status: connectionStatus,
+    ready: isReady,
+    free_mem: Math.round(os.freemem() / 1024 / 1024) + 'MB'
+  });
 });
 
 app.listen(port, '0.0.0.0', () => {
