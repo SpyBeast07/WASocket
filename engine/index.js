@@ -189,16 +189,23 @@ app.post('/send-message', async (req, res) => {
   const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
 
   if (fireAndForget) {
-    client.sendText(formattedPhone, message)
+    client.sendText(formattedPhone, message, { waitForAck: false })
       .then(() => { lastSuccessfulSendTimestamp = Date.now(); })
-      .catch((err) => { console.error('[Async Error] Send attempt:', err.message); });
+      .catch((err) => { 
+        if (err.message.includes('msgChunks')) return; // Ignore known WPPConnect bug
+        console.error('[Async Error] Send attempt:', err.message); 
+      });
 
     return res.status(202).json({ success: true, mode: 'fire-and-forget' });
   }
 
   // Standard Path
   try {
-    client.sendText(formattedPhone, message).catch(e => console.error('Send error:', e.message));
+    client.sendText(formattedPhone, message, { waitForAck: false })
+      .catch(e => {
+        if (e.message.includes('msgChunks')) return;
+        console.error('Send error:', e.message);
+      });
     lastSuccessfulSendTimestamp = Date.now();
     res.json({ success: true, note: 'Message dispatched' });
   } catch (error) {
