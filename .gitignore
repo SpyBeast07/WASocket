@@ -1,44 +1,15 @@
-# Environments
-venv/
-.env
-*.env
-!.env.example
-
-# Dependencies
-node_modules/
-**/node_modules/
-.pnpm-debug.log*
-
-# Python Cache
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-pip-log.txt
-pip-delete-this-directory.txt
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.env
 .venv
-.pytest_cache/
-.coverage
-.cache/
+venv/
+env/
 
-# WhatsApp Session (IMPORTANT: Do not push tokens)
-engine/tokens/
-tokens/
-
-# Logs
-*.log
-api.log
-infra/caddy_data/
-infra/caddy_config/
-
-# OS/IDE
-.DS_Store
+# IDEs
 .vscode/
 .idea/
-*.swp
-*.swo
-
-# Docker
-.dockerignore

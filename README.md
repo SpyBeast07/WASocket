@@ -1,93 +1,77 @@
-# WASocket
+# WAHA Gateway
 
-A high-performance, containerized WhatsApp API gateway built with FastAPI, Node.js (WPPConnect), and Redis.
+A minimal FastAPI backend acting as a lightweight gateway for [WAHA (WhatsApp HTTP API)](https://waha.dev/).
 
-## 🧠 Architecture
+## Features
+
+- **Send Messages**: Simple `POST /send` endpoint.
+- **Webhook Routing**: Receives events from WAHA and forwards them to specific project endpoints based on an in-memory routing map.
+- **Secure**: All endpoints protected by API key authentication.
+- **Async**: Fire-and-forget webhook forwarding using FastAPI `BackgroundTasks`.
+- **Cloudflare Ready**: Optimized for deployment behind Cloudflare Tunnels.
+
+## Project Structure
 
 ```text
-Public Traffic (HTTPS/8083)
-    ↓
-Caddy (Reverse Proxy)
-    ↓
-FastAPI (Security + Logic)
-    ↓
-Redis (Reliable Queue)
-    ↓
-Python Worker (Smart Retry + Rate Limiting)
-    ↓
-Node Engine (WPPConnect / Chromium)
-    ↓
-WhatsApp WebSocket
+app/
+  main.py           # Application entry point
+  config.py         # Configuration and Routing Map
+  routes/
+    send.py         # Message sending routes
+    webhook.py      # Webhook handling and routing
+  services/
+    waha_client.py  # WAHA API client
+    router.py       # Forwarding logic
 ```
 
-## ✨ Key Features
+## Getting Started
 
-- **Docker-First**: One-command deployment with `docker-compose`.
-- **High Reliability**: Automatic session recovery and smart worker retries.
-- **Secure**: Protected by API Key (`x-api-key` header).
-- **Observable**: Centralized health monitoring and structured logging.
-- **Persistent**: WhatsApp sessions are preserved across restarts.
+### 1. Installation
 
-## 🚀 Quick Start
+```bash
+# Clone the repository (if applicable)
+# Create a virtual environment
+python -m venv venv
+source venv/bin/activate
 
-### 1. Configure
-Copy the environment template and set your secret API key:
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. Configuration
+
+Copy `.env.example` to `.env` and fill in your details:
+
 ```bash
 cp .env.example .env
-# Edit .env and set your API_KEY
 ```
 
-### 2. Deploy
-Start the entire stack using Docker Compose:
+**Note on Routing:** Update the `ROUTING_MAP` in `app/config.py` to define where webhook events should be forwarded based on phone numbers or chat IDs.
+
+### 3. Running the Server
+
 ```bash
-docker-compose up -d --build
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 3. Authenticate
-View the logs to scan the WhatsApp QR code:
-```bash
-docker-compose logs -f engine
-```
-*Scan the generated QR code with your phone.*
-
-## 🔒 Security
-All API requests must include the following header:
-`x-api-key: your-secret-key`
-
-## 📡 API Endpoints
+## API Usage
 
 ### Send Message
-`POST /send`
+**POST** `/send`
+**Headers:** `x-api-key: your_internal_key`
+**Body:**
 ```json
 {
-  "phone": "919999999999",
-  "message": "Hello from WASocket!",
-  "priority": "high"
+  "phone": "919XXXXXXXXX",
+  "message": "Hello from Gateway!"
 }
 ```
 
-### System Health
-`GET /health`
-Returns the status of the API, Worker, Engine, and Queue lengths.
+### Webhook
+**POST** `/webhook`
+Expects payloads from WAHA. Will automatically route events if a mapping exists in `config.py`.
 
-## 🛠️ Components
+## Security
 
-- `api/`: FastAPI gateway.
-- `worker/`: Background job processor with rate limiting.
-- `engine/`: Node.js WhatsApp engine (WPPConnect).
-- `infra/`: Caddy reverse proxy configuration.
-- `shared/`: Common schemas and models.
-
-## ⚙️ Configuration (.env)
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `API_KEY` | Secret key for API access | `wasocket-secret-key` |
-| `SESSION_NAME` | WhatsApp session identifier | `wasocket_session` |
-| `REDIS_URL` | Redis connection string | `redis://redis:6379` |
-| `ENGINE_URL` | Engine connection string | `http://engine:3000` |
-
-## ⚠️ Important Notes
-- **Rate Limiting**: Default is set to 60 messages per minute to prevent account flagging.
-- **Session Persistence**: Sessions are stored in the `engine-tokens` Docker volume.
-- **Headless Mode**: The engine runs Chromium in headless mode within the container.
+- All incoming requests to `/send` must include the `x-api-key` header matching `INTERNAL_API_KEY`.
+- The `/webhook` endpoint can optionally validate a secret token via header or query parameter if `WEBHOOK_SECRET_TOKEN` is set.
