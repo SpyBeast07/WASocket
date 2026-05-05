@@ -32,8 +32,9 @@ async function start() {
   try {
     client = await wppconnect.create({
       session: sessionName,
-      autoClose: 600000, // 10 minutes of inactivity before closing (WPPConnect default is often 180s)
+      autoClose: false, // Disable auto-close entirely
       disableWelcome: true,
+      waitForLogin: true,
       catchQR: (base64Qrimg, asciiQR, attempts, urlCode) => {
         qrCode = urlCode;
         console.log(`\n--- SCAN THIS QR CODE (Attempt ${attempts}) ---\n`);
@@ -41,8 +42,14 @@ async function start() {
         console.log(`\n--------------------------------------------\n`);
       },
       statusFind: (statusSession, session) => {
-        connectionStatus = statusSession;
         logEvent('STATUS_FIND', { status: statusSession });
+        connectionStatus = statusSession;
+        
+        // Trigger recovery if browser closes or session is lost
+        if (['browserClose', 'autocloseCalled', 'serverClose'].includes(statusSession)) {
+          connectionStatus = 'DISCONNECTED';
+          if (!isReconnecting) triggerSoftRecovery();
+        }
       },
       folderNameToken: 'tokens',
       headless: true,
@@ -56,7 +63,6 @@ async function start() {
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
-        '--single-process', // Can help in low-memory VPS environments
         '--disable-gpu'
       ],
       puppeteerOptions: {
@@ -79,17 +85,30 @@ function setupClientEvents(client) {
     
     // Map states
     if (['CONNECTED', 'PAIRING', 'OPENING'].includes(state)) {
-      connectionStatus = state;
+      connectionStatus = 'CONNECTED';
     } else if (['CONFLICT', 'UNPAIRED', 'UNLAUNCHED', 'UNINITIALIZED'].includes(state)) {
       connectionStatus = 'AUTH_REQUIRED';
+      
+      // If we are explicitly UNPAIRED, we should restart to ensure a fresh QR is generated
+      if (state === 'UNPAIRED' && !isReconnecting) {
+        logEvent('RECOVERY_TRIGGERED', { reason: 'State changed to UNPAIRED (Logout detected)' });
+        triggerSoftRecovery();
+      }
     } else {
       connectionStatus = 'DISCONNECTED';
     }
 
-    // Auto-recovery for temporary disconnections
+    // Auto-recovery for fatal disconnections
     if (connectionStatus === 'DISCONNECTED' && !isReconnecting) {
-      logEvent('RECOVERY_TRIGGERED', { reason: 'State changed to DISCONNECTED' });
+      logEvent('RECOVERY_TRIGGERED', { reason: `State changed to ${state}` });
       triggerSoftRecovery();
+    }
+  });
+
+  client.onInterfaceChange((info) => {
+    logEvent('INTERFACE_CHANGE', { ...info });
+    if (info.mode === 'QR' || info.info === 'QR') {
+      connectionStatus = 'AUTH_REQUIRED';
     }
   });
 
