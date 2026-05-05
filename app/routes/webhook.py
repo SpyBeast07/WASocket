@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from fastapi import APIRouter, Request, BackgroundTasks, Header, Query, Optional
+from typing import Optional
+from fastapi import APIRouter, Request, BackgroundTasks, Header, Query
 from app.config import settings
 from app.services.router import forward_webhook, get_destination_url
 
