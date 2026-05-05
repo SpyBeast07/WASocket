@@ -66,6 +66,14 @@ async function start() {
     });
 
     console.log('WhatsApp Client Initialized');
+    
+    // Explicitly disable autoclose again after initialization
+    try {
+        await client.setAutoclose(false);
+    } catch (e) {
+        console.log('Could not setAutoclose(false) via method, relying on create option');
+    }
+
     lastConnectionTimestamp = Date.now();
     setupClientEvents(client);
   } catch (error) {
@@ -184,16 +192,22 @@ app.post('/send-message', async (req, res) => {
   }
 });
 
+// Health check interval - made less aggressive
 setInterval(async () => {
   if (client && connectionStatus === 'CONNECTED') {
-    const isActuallyConnected = await client.isConnected().catch(() => false);
-    if (!isActuallyConnected) {
-      logEvent('HEALTH_CHECK_FAILED', { reason: 'client.isConnected() returned false' });
-      connectionStatus = 'DISCONNECTED';
-      triggerSoftRecovery();
+    try {
+      const isActuallyConnected = await client.isConnected();
+      if (!isActuallyConnected) {
+        logEvent('HEALTH_CHECK_FAILED', { reason: 'client.isConnected() returned false' });
+        connectionStatus = 'DISCONNECTED';
+        // Only trigger recovery if we've been disconnected for a while
+        // triggerSoftRecovery(); 
+      }
+    } catch (e) {
+      logEvent('HEALTH_CHECK_ERROR', { error: e.message });
     }
   }
-}, 30000);
+}, 60000); // Check every minute instead of 30s
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Engine listening at http://0.0.0.0:${port}`);
