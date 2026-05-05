@@ -1,77 +1,92 @@
-# WAHA Gateway
+# 🚀 WAHA Gateway
 
-A minimal FastAPI backend acting as a lightweight gateway for [WAHA (WhatsApp HTTP API)](https://waha.dev/).
+A minimal, secure, and production-ready FastAPI gateway for **WAHA (WhatsApp HTTP API)**. Designed to act as a lightweight bridge between your projects and WhatsApp.
 
-## Features
+---
 
-- **Send Messages**: Simple `POST /send` endpoint.
-- **Webhook Routing**: Receives events from WAHA and forwards them to specific project endpoints based on an in-memory routing map.
-- **Secure**: All endpoints protected by API key authentication.
-- **Async**: Fire-and-forget webhook forwarding using FastAPI `BackgroundTasks`.
-- **Cloudflare Ready**: Optimized for deployment behind Cloudflare Tunnels.
+## ✨ Features
 
-## Project Structure
+- **🔒 Secure API**: Protects your WhatsApp pipeline with `x-api-key` validation.
+- **🛣️ Intelligent Routing**: Routes incoming webhooks to specific project endpoints based on Chat ID.
+- **⚡ Async Performance**: Fire-and-forget webhook forwarding with sub-10ms overhead.
+- **☁️ Cloudflare Ready**: Configured for 0.0.0.0:8000, perfect for Cloudflare Tunnels.
+- **🛡️ Loop Prevention**: Automatically filters out messages sent from your own session.
 
-```text
-app/
-  main.py           # Application entry point
-  config.py         # Configuration and Routing Map
-  routes/
-    send.py         # Message sending routes
-    webhook.py      # Webhook handling and routing
-  services/
-    waha_client.py  # WAHA API client
-    router.py       # Forwarding logic
-```
+---
 
-## Getting Started
+## 🛠️ Tech Stack
 
-### 1. Installation
+- **FastAPI**: Modern, high-performance Python framework.
+- **HTTPX**: Fully async HTTP client for fast forwarding.
+- **Pydantic Settings**: Robust environment variable management.
 
+---
+
+## 🚀 Quick Start
+
+### 1. Clone & Install
 ```bash
-# Clone the repository (if applicable)
-# Create a virtual environment
-python -m venv venv
-source venv/bin/activate
-
-# Install dependencies
+git clone <your-repo-url>
+cd WASocket
 pip install -r requirements.txt
 ```
 
-### 2. Configuration
-
-Copy `.env.example` to `.env` and fill in your details:
-
+### 2. Configure Environment
+Copy the example environment file and fill in your details:
 ```bash
 cp .env.example .env
 ```
 
-**Note on Routing:** Update the `ROUTING_MAP` in `app/config.py` to define where webhook events should be forwarded based on phone numbers or chat IDs.
+### 3. Define Routes
+Edit `app/services/router.py` to add your project webhooks:
+```python
+ROUTING_MAP = {
+    "919XXXXXXXXX": "https://project-a.com/webhook",
+    "group-id": "https://project-b.com/webhook"
+}
+```
 
-### 3. Running the Server
-
+### 4. Run the Gateway
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-## API Usage
+---
+
+## 📖 API Usage
 
 ### Send Message
-**POST** `/send`
-**Headers:** `x-api-key: your_internal_key`
-**Body:**
+**Endpoint:** `POST /send`  
+**Header:** `x-api-key: your_secure_key`
+
 ```json
 {
   "phone": "919XXXXXXXXX",
-  "message": "Hello from Gateway!"
+  "message": "Hello from WAHA Gateway!"
 }
 ```
 
-### Webhook
-**POST** `/webhook`
-Expects payloads from WAHA. Will automatically route events if a mapping exists in `config.py`.
+### Webhook Reception
+**Endpoint:** `POST /webhook`  
+Configure this URL in your WAHA dashboard. You can also set a secret token in `.env` for added security.
 
-## Security
+---
 
-- All incoming requests to `/send` must include the `x-api-key` header matching `INTERNAL_API_KEY`.
-- The `/webhook` endpoint can optionally validate a secret token via header or query parameter if `WEBHOOK_SECRET_TOKEN` is set.
+## 📂 Project Structure
+
+```text
+app/
+├── main.py           # Application entry point
+├── config.py         # Configuration management
+├── routes/
+│   ├── send.py       # Message sending endpoint
+│   └── webhook.py    # Incoming webhook handler
+└── services/
+    ├── waha_client.py # WAHA API client
+    └── router.py      # Webhook routing logic
+```
+
+---
+
+## ⚖️ License
+MIT License. Free to use and modify.

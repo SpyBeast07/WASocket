@@ -1,15 +1,11 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Dict, Optional
 
 class Settings(BaseSettings):
     WAHA_BASE_URL: str = "http://localhost:3000"
-    WAHA_API_KEY: Optional[str] = None
-    INTERNAL_API_KEY: str
+    WAHA_API_KEY: str = "your_waha_key"
+    INTERNAL_API_KEY: str = "your_secure_key"
+    WAHA_WEBHOOK_SECRET: str = "" # Optional secret token for incoming webhooks
 
-    # In-memory routing map loaded from WHATSAPP_ROUTING_JSON env var
-    # Example: WHATSAPP_ROUTING_JSON='{"919XXXXXXXXX": "https://project.com/webhook"}'
-    ROUTING_MAP: Dict[str, str] = {}
-
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_prefix="")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

@@ -2,13 +2,13 @@
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-
-# Environments
-.env
 .venv
 venv/
+ENV/
 env/
+
+# Environment
+.env
 
 # IDEs
 .vscode/
