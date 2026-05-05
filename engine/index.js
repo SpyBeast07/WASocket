@@ -21,7 +21,7 @@ let lastSuccessfulSendTimestamp = 0;
 let consecutiveFailureCount = 0;
 let isReconnecting = false;
 let lastConnectionTimestamp = 0;
-const STALE_THRESHOLD_MS = 60000;
+const STALE_THRESHOLD_MS = 300000; // 5 minutes instead of 1
 
 function logEvent(event, details = {}) {
   const timestamp = new Date().toISOString();
@@ -67,10 +67,17 @@ async function start() {
         '--disable-notifications',
         '--disable-extensions',
         '--disable-infobars',
+        '--disable-renderer-backgrounding',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-ipc-flooding-protection',
+        '--disable-breakpad',
+        '--disable-ipv6',
+        '--dns-prefetch-disable',
       ],
       puppeteerOptions: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-        args: ['--no-sandbox', '--disable-setuid-sandbox'], // Redundant but safe
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
       }
     });
 
