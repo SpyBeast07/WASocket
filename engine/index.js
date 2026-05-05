@@ -82,18 +82,29 @@ async function start() {
       ],
       puppeteerOptions: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=9222'],
+        protocolTimeout: 60000, // Increase to 60s for VPS stability
+        args: [
+          '--no-sandbox', 
+          '--disable-setuid-sandbox', 
+          '--disable-dev-shm-usage', 
+          '--remote-debugging-port=9222',
+          '--disable-setuid-sandbox',
+          '--disable-web-security',
+          '--disable-features=IsolateOrigins,site-per-process'
+        ],
       }
     });
 
     console.log('WhatsApp Client Initialized');
     
     // Explicitly disable autoclose again after initialization
-    try {
-        await client.setAutoClose(false); 
-        console.log('Successfully setAutoClose(false)');
-    } catch (e) {
-        console.log('Could not setAutoClose(false) via method:', e.message);
+    if (client && typeof client.setAutoClose === 'function') {
+        try {
+            await client.setAutoClose(false); 
+            console.log('Successfully setAutoClose(false)');
+        } catch (e) {
+            console.log('Could not setAutoClose(false) via method:', e.message);
+        }
     }
 
     lastConnectionTimestamp = Date.now();
