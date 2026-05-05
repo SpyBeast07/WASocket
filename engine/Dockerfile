@@ -45,6 +45,9 @@ RUN apt-get update && apt-get install -y wget gnupg ca-certificates \
     libxrender1 \
     libxss1 \
     libxtst6 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxshmfence1 \
     lsb-release \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/* \

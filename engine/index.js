@@ -99,8 +99,7 @@ async function start() {
           '--disable-features=IsolateOrigins,site-per-process,TranslateUI,BlinkGenPropertyTrees',
           '--disable-gpu',
           '--disable-software-rasterizer',
-          '--single-process', // CRITICAL: Reduces memory by merging processes
-          '--js-flags="--max-old-space-size=400"', // CRITICAL: Limits RAM usage
+          '--js-flags="--max-old-space-size=400"', // Limits RAM usage
           '--disable-extensions',
           '--disable-background-networking',
           '--disable-default-apps',
