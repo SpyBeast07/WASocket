@@ -32,19 +32,36 @@ async function start() {
   try {
     client = await wppconnect.create({
       session: sessionName,
-      autoClose: 0,
-      whatsappVersion: '2.3000.1015901307',
+      autoClose: 600000, // 10 minutes of inactivity before closing (WPPConnect default is often 180s)
+      disableWelcome: true,
       catchQR: (base64Qrimg, asciiQR, attempts, urlCode) => {
         qrCode = urlCode;
+        console.log(`\n--- SCAN THIS QR CODE (Attempt ${attempts}) ---\n`);
+        console.log(asciiQR);
+        console.log(`\n--------------------------------------------\n`);
       },
       statusFind: (statusSession, session) => {
         connectionStatus = statusSession;
+        logEvent('STATUS_FIND', { status: statusSession });
       },
       folderNameToken: 'tokens',
       headless: true,
-      useChrome: true,
+      useChrome: false,
       debug: false,
-      browserArgs: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      logQR: true,
+      browserArgs: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox', 
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process', // Can help in low-memory VPS environments
+        '--disable-gpu'
+      ],
+      puppeteerOptions: {
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+      }
     });
 
     console.log('WhatsApp Client Initialized');
@@ -78,8 +95,10 @@ function setupClientEvents(client) {
 
   client.onStreamChange((state) => {
     logEvent('STREAM_STATE_CHANGE', { state });
-    if (state === 'DISCONNECTED') {
-      if (!isReconnecting) triggerSoftRecovery();
+    // WPPConnect handles stream reconnection internally. 
+    // We only update status if it's connected.
+    if (state === 'CONNECTED') {
+      connectionStatus = 'CONNECTED';
     }
   });
 
