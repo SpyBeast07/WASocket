@@ -22,6 +22,7 @@ let consecutiveFailureCount = 0;
 let isReconnecting = false;
 let lastConnectionTimestamp = 0;
 const STALE_THRESHOLD_MS = 300000; // 5 minutes instead of 1
+const os = require('os');
 
 function logEvent(event, details = {}) {
   const timestamp = new Date().toISOString();
@@ -29,6 +30,11 @@ function logEvent(event, details = {}) {
 }
 
 async function start() {
+  logEvent('ENGINE_STARTUP', {
+      free_mem: Math.round(os.freemem() / 1024 / 1024) + 'MB',
+      total_mem: Math.round(os.totalmem() / 1024 / 1024) + 'MB',
+      cores: os.cpus().length
+  });
   try {
     client = await wppconnect.create({
       session: sessionName,
@@ -82,15 +88,17 @@ async function start() {
       ],
       puppeteerOptions: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        protocolTimeout: 60000, // Increase to 60s for VPS stability
+        protocolTimeout: 120000, // 2 minutes for heavy VPS loads
+        dumpio: true, // PIPE CHROME LOGS TO TERMINAL
         args: [
           '--no-sandbox', 
           '--disable-setuid-sandbox', 
           '--disable-dev-shm-usage', 
           '--remote-debugging-port=9222',
-          '--disable-setuid-sandbox',
           '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process'
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-gpu',
+          '--disable-software-rasterizer'
         ],
       }
     });
