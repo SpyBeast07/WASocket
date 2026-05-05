@@ -32,7 +32,8 @@ async function start() {
   try {
     client = await wppconnect.create({
       session: sessionName,
-      autoClose: false, // Completely disable auto-close
+      autoClose: false,
+      tokenStore: 'file',
       disableWelcome: true,
       catchQR: (base64Qrimg, asciiQR, attempts, urlCode) => {
         qrCode = urlCode;
@@ -77,19 +78,15 @@ function setupClientEvents(client) {
   client.onStateChange((state) => {
     logEvent('CONNECTION_STATE_CHANGE', { state });
     
-    // Map states
+    // Update status based on state
     if (['CONNECTED', 'PAIRING', 'OPENING', 'SYNCING'].includes(state)) {
-      connectionStatus = 'CONNECTED'; // Treat all these as "working" for the API
+      connectionStatus = 'CONNECTED';
     } else if (['CONFLICT', 'UNPAIRED', 'UNLAUNCHED', 'UNINITIALIZED'].includes(state)) {
       connectionStatus = 'AUTH_REQUIRED';
     } else if (state === 'DISCONNECTED') {
+      // Don't trigger recovery immediately from events, let the interval handle it
+      // as events can be noisy during transitions.
       connectionStatus = 'DISCONNECTED';
-    }
-
-    // Auto-recovery for temporary disconnections
-    if (connectionStatus === 'DISCONNECTED' && !isReconnecting) {
-      logEvent('RECOVERY_TRIGGERED', { reason: 'State changed to DISCONNECTED' });
-      triggerSoftRecovery();
     }
   });
 
