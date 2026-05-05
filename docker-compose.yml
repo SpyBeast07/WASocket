@@ -45,7 +45,7 @@ services:
       - engine-tokens:/app/tokens
     env_file:
       - .env
-    shm_size: '256mb'
+    shm_size: '512mb'
     dns:
       - 8.8.8.8
       - 1.1.1.1

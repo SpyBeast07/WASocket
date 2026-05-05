@@ -14,10 +14,10 @@ app.use(cors());
 app.use(express.json());
 
 let client = null;
-let connectionStatus = 'DISCONNECTED'; // DISCONNECTED, CONNECTING, CONNECTED
+let connectionStatus = 'DISCONNECTED'; 
 let qrCode = null;
-let lastSuccessfulSendTimestamp = 0;
 let isReady = false;
+let browserHealth = 'UNKNOWN';
 
 function logEvent(event, details = {}) {
   const timestamp = new Date().toISOString();
@@ -27,8 +27,7 @@ function logEvent(event, details = {}) {
 async function start() {
   logEvent('ENGINE_STARTUP', {
       free_mem: Math.round(os.freemem() / 1024 / 1024) + 'MB',
-      total_mem: Math.round(os.totalmem() / 1024 / 1024) + 'MB',
-      cores: os.cpus().length
+      total_mem: Math.round(os.totalmem() / 1024 / 1024) + 'MB'
   });
 
   isReady = false;
@@ -44,18 +43,13 @@ async function start() {
       headless: 'new',
       debug: false,
       logQR: true,
-      whatsappVersion: '2.3000.1015901391', // Pin to a known stable version
+      whatsappVersion: '2.3000.1015901391',
       catchQR: (base64Qrimg, asciiQR, attempts, urlCode) => {
         qrCode = urlCode;
         logEvent('QR_RECEIVED', { attempt: attempts });
       },
       statusFind: (statusSession) => {
         logEvent('STATUS_FIND', { status: statusSession });
-        if (['isLogged', 'qrReadSuccess', 'inChat'].includes(statusSession)) {
-          // Don't set CONNECTED here, let onStateChange handle the final transition
-          // but ensure we are not in DISCONNECTED
-          if (connectionStatus === 'DISCONNECTED') connectionStatus = 'CONNECTING';
-        }
       },
       puppeteerOptions: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/browser',
@@ -76,8 +70,17 @@ async function start() {
 
     logEvent('CLIENT_INITIALIZED');
     
-    // Forward browser console logs to container logs for diagnosis
+    // SELECTIVE RESOURCE BLOCKING (RAM Optimization)
     if (client.page) {
+        await client.page.setRequestInterception(true);
+        client.page.on('request', (req) => {
+            const type = req.resourceType();
+            if (['media', 'font'].includes(type)) {
+                return req.abort();
+            }
+            req.continue();
+        });
+
         client.page.on('console', msg => {
             const text = msg.text();
             if (text.includes('WPP') || text.includes('error')) {
@@ -87,6 +90,7 @@ async function start() {
     }
 
     setupClientEvents(client);
+    startHealthChecks();
   } catch (error) {
     console.error('Error starting WPPConnect:', error);
     connectionStatus = 'ERROR';
@@ -100,7 +104,6 @@ function setupClientEvents(client) {
     if (state === 'CONNECTED') {
       connectionStatus = 'CONNECTED';
       logEvent('SESSION_CONNECTED_WARMING_UP');
-      // Grace period for encryption keys to initialize
       await new Promise(resolve => setTimeout(resolve, 5000));
       isReady = true;
       logEvent('SESSION_READY_TO_SEND');
@@ -123,6 +126,41 @@ function setupClientEvents(client) {
   }
 }
 
+async function startHealthChecks() {
+    setInterval(async () => {
+        if (!client || !client.page) return;
+        
+        try {
+            // 1. Browser Ping
+            await Promise.race([
+                client.page.evaluate(() => 1 + 1),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Ping timeout')), 5000))
+            ]);
+            browserHealth = 'OK';
+
+            // 2. WhatsApp Conn Check
+            if (isReady) {
+                const isConn = await client.page.evaluate(() => {
+                    return typeof WPP !== 'undefined' && WPP.conn && WPP.conn.isMainConnected();
+                }).catch(() => false);
+                
+                if (!isConn && connectionStatus === 'CONNECTED') {
+                    logEvent('WHATSAPP_DISCONNECTED_INTERNAL');
+                    // We don't force restart here yet, let's see if it recovers
+                }
+            }
+        } catch (e) {
+            logEvent('BROWSER_HEALTH_CHECK_FAILED', { error: e.message });
+            browserHealth = 'FROZEN';
+            // Force reload if frozen
+            if (e.message.includes('Ping timeout')) {
+                logEvent('FORCING_PAGE_RELOAD');
+                client.page.reload().catch(() => {});
+            }
+        }
+    }, 60000); // Every minute
+}
+
 app.post('/send-message', async (req, res) => {
   const { phone, message } = req.body;
   logEvent('SEND_MESSAGE_REQUEST', { phone });
@@ -130,7 +168,6 @@ app.post('/send-message', async (req, res) => {
   if (!phone || !message) return res.status(400).json({ error: 'Missing data' });
   
   if (!isReady) {
-    logEvent('SEND_MESSAGE_FAILED', { reason: 'not_ready', status: connectionStatus });
     return res.status(503).json({ error: 'Session initializing, please wait' });
   }
 
@@ -138,10 +175,11 @@ app.post('/send-message', async (req, res) => {
     const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
     logEvent('SEND_MESSAGE_START', { formattedPhone });
     
-    // Extra safety: check if WPP is actually injected and ready
-    const isActuallyConnected = await client.isConnected();
-    if (!isActuallyConnected) {
-        throw new Error('WPP reported not connected during dispatch');
+    // Ensure WPP is ready
+    const wppReady = await client.page.evaluate(() => typeof WPP !== 'undefined' && WPP.isReady).catch(() => false);
+    if (!wppReady) {
+        logEvent('WPP_NOT_READY_IN_PAGE');
+        return res.status(503).json({ error: 'WhatsApp internal engine not ready' });
     }
 
     await Promise.race([
@@ -149,17 +187,17 @@ app.post('/send-message', async (req, res) => {
         new Promise((_, reject) => setTimeout(() => reject(new Error('Send timeout')), 25000))
     ]);
     
-    lastSuccessfulSendTimestamp = Date.now();
     logEvent('SEND_MESSAGE_SUCCESS', { phone });
     res.json({ success: true });
   } catch (error) {
     logEvent('SEND_MESSAGE_ERROR', { error: error.message, phone });
-    // If we get an encryption error, mark as not ready briefly
-    if (error.message.includes('EncryptionKey')) {
-        isReady = false;
-        setTimeout(() => { isReady = true; }, 5000);
-    }
     res.status(500).json({ error: error.message });
+    
+    // If multiple timeouts, reload page
+    if (error.message.includes('timeout')) {
+        logEvent('RELOAD_ON_TIMEOUT');
+        client.page.reload().catch(() => {});
+    }
   }
 });
 
@@ -179,6 +217,7 @@ app.get('/health', (req, res) => {
     status: 'ok', 
     engine_status: connectionStatus,
     ready: isReady,
+    browser_health: browserHealth,
     free_mem: Math.round(os.freemem() / 1024 / 1024) + 'MB'
   });
 });
