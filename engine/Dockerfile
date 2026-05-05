@@ -1,11 +1,18 @@
 FROM node:20-slim
 
-# Install Google Chrome and dependencies
-RUN apt-get update && apt-get install -y wget gnupg \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' \
-    && apt-get update && apt-get install -y \
-    google-chrome-stable \
+# Install dependencies based on architecture
+RUN apt-get update && apt-get install -y wget gnupg ca-certificates \
+    && ARCH=$(uname -m) \
+    && if [ "$ARCH" = "x86_64" ]; then \
+        echo "Installing Google Chrome for AMD64" \
+        && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+        && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' \
+        && apt-get update && apt-get install -y google-chrome-stable; \
+    else \
+        echo "Installing Chromium for ARM64" \
+        && apt-get update && apt-get install -y chromium; \
+    fi \
+    && apt-get install -y \
     fonts-liberation \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -40,13 +47,14 @@ RUN apt-get update && apt-get install -y wget gnupg \
     libxtst6 \
     lsb-release \
     xdg-utils \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s $(which google-chrome-stable || which chromium || which google-chrome) /usr/bin/browser
 
 WORKDIR /app
 
-# Puppeteer/WPPConnect config to use system chrome
+# Puppeteer/WPPConnect config
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/browser
 
 COPY engine/package.json ./
 RUN npm install
