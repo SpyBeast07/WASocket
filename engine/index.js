@@ -32,7 +32,7 @@ async function start() {
   try {
     client = await wppconnect.create({
       session: sessionName,
-      autoClose: false,
+      autoClose: 0, 
       tokenStore: 'file',
       disableWelcome: true,
       catchQR: (base64Qrimg, asciiQR, attempts, urlCode) => {
@@ -42,8 +42,12 @@ async function start() {
         console.log(`\n--------------------------------------------\n`);
       },
       statusFind: (statusSession, session) => {
-        connectionStatus = statusSession;
         logEvent('STATUS_FIND', { status: statusSession });
+        if (['browserClose', 'autocloseCalled', 'desconnectedMobile'].includes(statusSession)) {
+            connectionStatus = 'DISCONNECTED';
+        } else if (statusSession === 'isLogged' || statusSession === 'qrReadSuccess') {
+            connectionStatus = 'CONNECTED';
+        }
       },
       folderNameToken: 'tokens',
       headless: true,
@@ -51,17 +55,21 @@ async function start() {
       debug: false,
       logQR: true,
       browserArgs: [
-        '--no-sandbox', 
-        '--disable-setuid-sandbox', 
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
-        '--single-process', // Can help in low-memory VPS environments
-        '--disable-gpu'
+        '--disable-gpu',
+        '--hide-scrollbars',
+        '--disable-notifications',
+        '--disable-extensions',
+        '--disable-infobars',
       ],
       puppeteerOptions: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        args: ['--no-sandbox', '--disable-setuid-sandbox'], // Redundant but safe
       }
     });
 
@@ -69,9 +77,10 @@ async function start() {
     
     // Explicitly disable autoclose again after initialization
     try {
-        await client.setAutoclose(false);
+        await client.setAutoClose(false); 
+        console.log('Successfully setAutoClose(false)');
     } catch (e) {
-        console.log('Could not setAutoclose(false) via method, relying on create option');
+        console.log('Could not setAutoClose(false) via method:', e.message);
     }
 
     lastConnectionTimestamp = Date.now();
@@ -120,12 +129,17 @@ async function triggerSoftRecovery() {
     
     try {
         if (client) {
-          await client.close().catch(() => {});
+          logEvent('CLOSING_OLD_CLIENT');
+          // Add a timeout to close() so it doesn't hang the recovery process
+          await Promise.race([
+            client.close(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 10000))
+          ]).catch(e => logEvent('CLOSE_ERROR', { error: e.message }));
           client = null;
         }
         connectionStatus = 'RECONNECTING';
         
-        // Wait 5 seconds before retrying to avoid tight loops
+        // Wait 5 seconds before retrying
         await new Promise(resolve => setTimeout(resolve, 5000));
         await start();
     } catch (e) {
