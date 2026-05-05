@@ -1,11 +1,10 @@
 import time
 import logging
 import httpx
+import asyncio
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, status
 from fastapi.security import APIKeyHeader
-from arq import create_pool
-from arq.connections import RedisSettings
-from shared.schemas import MessageRequest, MessagePriority
+from shared.schemas import MessageRequest
 from api.config import settings
 
 # Configure logging
@@ -24,30 +23,17 @@ async def get_api_key(api_key: str = Depends(api_key_header)):
             detail="Invalid or missing API Key",
         )
     return api_key
-redis_pool = None
+
 http_client = None
 
 @app.on_event("startup")
 async def startup():
-    global redis_pool, http_client
-    # Parse redis_url for RedisSettings
-    from urllib.parse import urlparse
-    logger.info(f"Connecting to Redis using URL: {settings.redis_url}")
-    u = urlparse(settings.redis_url)
-    redis_settings = RedisSettings(
-        host=u.hostname or "localhost",
-        port=u.port or 6379,
-        password=u.password
-    )
-    
-    redis_pool = await create_pool(redis_settings)
-    http_client = httpx.AsyncClient(timeout=5.0)
-    logger.info(f"API Started | Connected to Redis at {u.hostname}:{u.port or 6379}")
+    global http_client
+    http_client = httpx.AsyncClient(timeout=30.0)
+    logger.info(f"API Started | Engine URL: {settings.engine_url}")
 
 @app.on_event("shutdown")
 async def shutdown():
-    if redis_pool:
-        await redis_pool.close()
     if http_client:
         await http_client.aclose()
 
@@ -70,88 +56,78 @@ async def health_check():
         "timestamp": time.time(),
         "services": {
             "api": "CONNECTED",
-            "engine": "UNKNOWN",
-            "worker": "UNKNOWN"
-        },
-        "queue": {
-            "high": 0,
-            "default": 0
+            "engine": "UNKNOWN"
         }
     }
 
-    # 1. Check Engine
+    # Check Engine
     try:
-        resp = await http_client.get(f"{settings.engine_url}/status")
+        resp = await http_client.get(f"{settings.engine_url}/health")
         if resp.status_code == 200:
             engine_data = resp.json()
-            health["services"]["engine"] = engine_data.get("status", "CONNECTED")
+            health["services"]["engine"] = "CONNECTED" if engine_data.get("ready") else "INITIALIZING"
         else:
             health["services"]["engine"] = "ERROR"
     except Exception:
         health["services"]["engine"] = "DISCONNECTED"
 
-    # 2. Check Worker Heartbeat
-    if redis_pool:
-        heartbeat = await redis_pool.get("wasocket:worker_heartbeat")
-        if heartbeat:
-            last_heartbeat = float(heartbeat)
-            if time.time() - last_heartbeat < 60:
-                health["services"]["worker"] = "CONNECTED"
-            else:
-                health["services"]["worker"] = "STALE"
-        else:
-            health["services"]["worker"] = "DISCONNECTED"
-
-        # 3. Queue Size
-        health["queue"]["high"] = await redis_pool.zcard("arq:queue:high")
-        health["queue"]["default"] = await redis_pool.zcard("arq:queue")
-
     # Overall Status
-    if any(s in ["DISCONNECTED", "ERROR"] for s in health["services"].values()):
+    if health["services"]["engine"] in ["DISCONNECTED", "ERROR"]:
         health["status"] = "degraded"
     
     return health
 
-@app.get("/metrics")
-async def get_metrics():
-    """
-    Exposes basic metrics about the queue lengths.
-    """
-    if not redis_pool:
-        return {"error": "Redis not connected"}
-    
-    # arq uses zsets for queues
-    high_queue_len = await redis_pool.zcard("arq:queue:high") if hasattr(redis_pool, 'zcard') else "unknown"
-    default_queue_len = await redis_pool.zcard("arq:queue")
-    
-    return {
-        "queue_length": {
-            "high": high_queue_len,
-            "default": default_queue_len
-        },
-        "timestamp": time.time()
-    }
-
 @app.post("/send", dependencies=[Depends(get_api_key)])
 async def send_message(payload: MessageRequest):
-    start_enqueue = time.time()
-    job = await redis_pool.enqueue_job(
-        "send_whatsapp_message",
-        phone=payload.phone,
-        message=payload.message,
-        metadata=payload.metadata,
-        priority=payload.priority,
-        queued_at=time.time()
-    )
-    enqueue_duration = time.time() - start_enqueue
+    start_time = time.time()
     
-    return {
-        "success": True,
-        "job_id": job.job_id,
-        "priority": payload.priority,
-        "queued_at": time.time(),
-        "enqueue_latency_ms": round(enqueue_duration * 1000, 2)
-    }
+    # 1. Basic Rate Delay (Optional light pacing)
+    await asyncio.sleep(0.3) 
+
+    max_retries = 2
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            # Check engine status before sending
+            # Note: Engine's /send-message already checks readiness, but we can be proactive if needed.
+            # However, the user said "Do NOT add heavy checks per request".
+            
+            resp = await http_client.post(
+                f"{settings.engine_url}/send-message",
+                json={"phone": payload.phone, "message": payload.message},
+                timeout=25.0
+            )
+            
+            if resp.status_code == 200:
+                result = resp.json()
+                dispatch_duration = time.time() - start_time
+                return {
+                    "success": True,
+                    "message_id": result.get("messageId"),
+                    "latency_ms": round(dispatch_duration * 1000, 2),
+                    "attempts": attempt + 1
+                }
+            
+            # If 503 (initializing), we might want to wait longer or retry
+            if resp.status_code == 503:
+                last_error = "Engine initializing"
+                logger.warning(f"Attempt {attempt + 1}: Engine initializing. Retrying...")
+            else:
+                last_error = f"Engine error: {resp.text}"
+                logger.error(f"Attempt {attempt + 1}: Engine error {resp.status_code}: {resp.text}")
+
+        except (httpx.RequestError, asyncio.TimeoutError) as e:
+            last_error = str(e)
+            logger.warning(f"Attempt {attempt + 1}: Transport error: {e}")
+
+        if attempt < max_retries:
+            await asyncio.sleep(1.0) # Simple backoff
+
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Failed to send message after {max_retries + 1} attempts. Last error: {last_error}"
+    )
 
 if __name__ == "__main__":
     import uvicorn

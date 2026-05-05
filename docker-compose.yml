@@ -1,35 +1,10 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: was-redis
-    restart: always
-    volumes:
-      - redis-data:/data
-    networks:
-      - was-net
-
   api:
     build:
       context: .
       dockerfile: api/Dockerfile
     container_name: was-api
     restart: always
-    depends_on:
-      - redis
-    env_file:
-      - .env
-    networks:
-      - was-net
-
-  worker:
-    build:
-      context: .
-      dockerfile: worker/Dockerfile
-    container_name: was-worker
-    restart: always
-    depends_on:
-      - redis
-      - engine
     env_file:
       - .env
     networks:
@@ -76,7 +51,6 @@ networks:
     driver: bridge
 
 volumes:
-  redis-data:
   engine-tokens:
   caddy-data:
   caddy-config:

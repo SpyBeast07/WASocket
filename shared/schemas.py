@@ -1,16 +1,10 @@
 import re
-from enum import Enum
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any
-
-class MessagePriority(str, Enum):
-    HIGH = "high"
-    DEFAULT = "default"
 
 class MessageRequest(BaseModel):
     phone: str = Field(..., description="Phone number with country code")
     message: str = Field(..., description="Message content", min_length=1)
-    priority: MessagePriority = Field(default=MessagePriority.DEFAULT)
     metadata: Optional[Dict[str, Any]] = None
 
     @field_validator("phone")
