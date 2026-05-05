@@ -15,34 +15,33 @@ async def handle_webhook(
     x_api_key: Optional[str] = Header(None, alias="x-api-key"),
     token: Optional[str] = Query(None)
 ):
-    logger.debug(f"Webhook Auth - Header: {x_api_key}, Token: {token}")
-    # Optional secret validation if configured
-    if settings.WEBHOOK_SECRET_TOKEN:
-        if x_api_key != settings.WEBHOOK_SECRET_TOKEN and token != settings.WEBHOOK_SECRET_TOKEN:
-            logger.warning("Unauthorized webhook attempt")
-            return {"status": "unauthorized"}
-
     payload = await request.json()
     event_type = payload.get("event")
-    
-    # We only care about message events for now (WAHA events like 'message', 'message.upsert', etc.)
-    # Adjust based on WAHA version/config
     data = payload.get("payload", {})
+    chat_id = data.get("chatId") or data.get("from")
     
-    # Ignore if message from me
+    # LOG EVERYTHING IMMEDIATELY
+    logger.info(f"Incoming WAHA Webhook: {event_type} from {chat_id}")
+    logger.debug(f"Webhook Auth Check - Header: {x_api_key}, Token: {token}")
+
+    # 1. Optional secret validation if configured
+    if settings.WEBHOOK_SECRET_TOKEN:
+        if x_api_key != settings.WEBHOOK_SECRET_TOKEN and token != settings.WEBHOOK_SECRET_TOKEN:
+            logger.warning(f"Unauthorized webhook attempt from {chat_id}")
+            return {"status": "unauthorized"}
+
+    # 2. Ignore if message from me (loop prevention)
     if data.get("fromMe"):
+        logger.info(f"Ignored event from {chat_id} (reason: fromMe)")
         return {"status": "ignored", "reason": "fromMe"}
 
-    chat_id = data.get("chatId") or data.get("from")
     if not chat_id:
         return {"status": "ignored", "reason": "no_chat_id"}
 
-    logger.info(f"Received webhook event: {event_type} from {chat_id}")
-
-    # Routing
+    # 3. Routing
     dest_url = get_destination_url(chat_id)
     if dest_url:
-        logger.info(f"Routing event to {dest_url}")
+        logger.info(f"Routing event from {chat_id} to {dest_url}")
         background_tasks.add_task(forward_webhook, dest_url, payload)
     else:
         logger.debug(f"No route found for {chat_id}")
