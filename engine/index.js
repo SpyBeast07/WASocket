@@ -32,7 +32,8 @@ async function start() {
   try {
     client = await wppconnect.create({
       session: sessionName,
-      autoClose: 0, 
+      autoClose: 3600000, // 1 hour timeout (instead of 0 or 180s)
+      waitForLogin: false, // DON'T wait for login to resolve 'create'
       tokenStore: 'file',
       disableWelcome: true,
       catchQR: (base64Qrimg, asciiQR, attempts, urlCode) => {
