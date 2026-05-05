@@ -269,22 +269,36 @@ app.post('/logout', async (req, res) => {
   }
 });
 
-// Health check interval - made less aggressive
+let disconnectedMobileTimer = null;
+
 setInterval(async () => {
-  if (client && connectionStatus === 'CONNECTED') {
+  if (client) {
     try {
       const isActuallyConnected = await client.isConnected();
-      if (!isActuallyConnected) {
+      
+      if (connectionStatus === 'CONNECTED' && !isActuallyConnected) {
         logEvent('HEALTH_CHECK_FAILED', { reason: 'client.isConnected() returned false' });
         connectionStatus = 'DISCONNECTED';
-        // Only trigger recovery if we've been disconnected for a while
-        // triggerSoftRecovery(); 
       }
+
+      // LIMBO DETECTOR: Stuck in disconnectedMobile
+      if (connectionStatus === 'DISCONNECTED' && !isActuallyConnected) {
+          if (!disconnectedMobileTimer) {
+              disconnectedMobileTimer = Date.now();
+          } else if (Date.now() - disconnectedMobileTimer > 120000) { // 2 minutes
+              logEvent('LIMBO_DETECTED', { reason: 'Stuck in disconnectedMobile for 2m' });
+              disconnectedMobileTimer = null;
+              triggerSoftRecovery();
+          }
+      } else {
+          disconnectedMobileTimer = null;
+      }
+
     } catch (e) {
       logEvent('HEALTH_CHECK_ERROR', { error: e.message });
     }
   }
-}, 60000); // Check every minute instead of 30s
+}, 30000); // Check every 30s
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Engine listening at http://0.0.0.0:${port}`);
