@@ -12,9 +12,10 @@ logger = logging.getLogger(__name__)
 async def handle_webhook(
     request: Request, 
     background_tasks: BackgroundTasks,
-    x_api_key: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="x-api-key"),
     token: Optional[str] = Query(None)
 ):
+    logger.debug(f"Webhook Auth - Header: {x_api_key}, Token: {token}")
     # Optional secret validation if configured
     if settings.WEBHOOK_SECRET_TOKEN:
         if x_api_key != settings.WEBHOOK_SECRET_TOKEN and token != settings.WEBHOOK_SECRET_TOKEN:
