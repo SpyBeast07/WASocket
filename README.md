@@ -24,10 +24,16 @@ A minimal, secure, and production-ready FastAPI gateway for **WAHA (WhatsApp HTT
 
 ## 🚀 Quick Start
 
-### 1. Clone & Install
+### 1. Clone & Setup
 ```bash
 git clone <your-repo-url>
 cd WASocket
+
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
