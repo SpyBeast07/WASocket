@@ -84,7 +84,7 @@ async def send_whatsapp_message(ctx, phone: str, message: str, priority: str = "
         response = await client.post(
             f"{settings.engine_url}/send-message",
             json={"phone": phone, "message": message},
-            timeout=10.0
+            timeout=30.0
         )
         response.raise_for_status()
         engine_duration = time.time() - start_engine_call

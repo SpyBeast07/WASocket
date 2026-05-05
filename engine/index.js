@@ -140,15 +140,31 @@ app.get('/status', (req, res) => {
 
 app.post('/send-message', async (req, res) => {
   const { phone, message } = req.body;
+  logEvent('SEND_MESSAGE_REQUEST', { phone });
+
   if (!phone || !message) return res.status(400).json({ error: 'Missing data' });
-  if (connectionStatus !== 'CONNECTED') return res.status(401).json({ error: 'Client not connected' });
+  
+  if (connectionStatus !== 'CONNECTED') {
+    logEvent('SEND_MESSAGE_FAILED', { reason: 'not_connected', status: connectionStatus });
+    return res.status(401).json({ error: 'Client not connected' });
+  }
 
   try {
     const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
-    await client.sendText(formattedPhone, message);
+    logEvent('SEND_MESSAGE_START', { formattedPhone });
+    
+    // Use waitForAck: false to just ensure the message is dispatched to WhatsApp
+    // without waiting for delivery confirmation which can be flaky.
+    await Promise.race([
+        client.sendText(formattedPhone, message, { waitForAck: false }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Send timeout')), 25000))
+    ]);
+    
     lastSuccessfulSendTimestamp = Date.now();
+    logEvent('SEND_MESSAGE_SUCCESS', { phone });
     res.json({ success: true });
   } catch (error) {
+    logEvent('SEND_MESSAGE_ERROR', { error: error.message, phone });
     res.status(500).json({ error: error.message });
   }
 });
