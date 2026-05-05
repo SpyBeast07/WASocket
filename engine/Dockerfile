@@ -1,18 +1,9 @@
 FROM node:20-slim
 
-# Install dependencies based on architecture
-RUN apt-get update && apt-get install -y wget gnupg ca-certificates \
-    && ARCH=$(uname -m) \
-    && if [ "$ARCH" = "x86_64" ]; then \
-        echo "Installing Google Chrome for AMD64" \
-        && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-        && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' \
-        && apt-get update && apt-get install -y google-chrome-stable; \
-    else \
-        echo "Installing Chromium for ARM64" \
-        && apt-get update && apt-get install -y chromium; \
-    fi \
-    && apt-get install -y \
+# Install Chromium, dumb-init and dependencies
+RUN apt-get update && apt-get install -y \
+    chromium \
+    dumb-init \
     fonts-liberation \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -50,14 +41,18 @@ RUN apt-get update && apt-get install -y wget gnupg ca-certificates \
     libxshmfence1 \
     lsb-release \
     xdg-utils \
+    wget \
+    gnupg \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -s $(which google-chrome-stable || which chromium || which google-chrome) /usr/bin/browser
+    && ln -s /usr/bin/chromium /usr/bin/browser
 
 WORKDIR /app
 
 # Puppeteer/WPPConnect config
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/browser
+ENV PUPPETEER_CACHE_DIR=/app/.puppeteer_cache
 
 COPY engine/package.json ./
 RUN npm install
@@ -65,5 +60,11 @@ RUN npm install
 COPY engine/index.js ./
 
 EXPOSE 3000
+
+# Ensure tokens directory exists and is writable
+RUN mkdir -p /app/tokens && chmod 777 /app/tokens
+
+# Use dumb-init as entrypoint to manage zombie processes
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 
 CMD ["sh", "-c", "rm -rf /app/tokens/**/SingletonLock && node index.js"]
