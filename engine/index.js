@@ -88,17 +88,26 @@ async function start() {
       ],
       puppeteerOptions: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        protocolTimeout: 120000, // 2 minutes for heavy VPS loads
-        dumpio: true, // PIPE CHROME LOGS TO TERMINAL
+        protocolTimeout: 120000,
+        dumpio: true,
         args: [
           '--no-sandbox', 
           '--disable-setuid-sandbox', 
           '--disable-dev-shm-usage', 
           '--remote-debugging-port=9222',
           '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-features=IsolateOrigins,site-per-process,TranslateUI,BlinkGenPropertyTrees',
           '--disable-gpu',
-          '--disable-software-rasterizer'
+          '--disable-software-rasterizer',
+          '--single-process', // CRITICAL: Reduces memory by merging processes
+          '--js-flags="--max-old-space-size=400"', // CRITICAL: Limits RAM usage
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-default-apps',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--no-first-run',
+          '--mute-audio'
         ],
       }
     });
