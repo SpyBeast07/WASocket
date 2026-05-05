@@ -8,12 +8,9 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET_TOKEN: Optional[str] = None
 
     # In-memory routing map
-    # Example: {"919XXXXXXXXX": "https://project-a.com/webhook"}
-    # ROUTING_MAP: Dict[str, str] = {}
-    ROUTING_MAP: Dict[str, str] = {
-        "919269972395": "https://localhost:8000/api/whatsapp-webhook",
-        "120363023456789": "https://your-project-b.com/group-handler"
-    }
+    # Loaded from WHATSAPP_ROUTING_JSON env var as a JSON string
+    # Example: WHATSAPP_ROUTING_JSON='{"919XXXXXXXXX": "https://project-a.com/webhook"}'
+    ROUTING_MAP: Dict[str, str] = {}
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
