@@ -67,4 +67,4 @@ RUN mkdir -p /app/tokens && chmod 777 /app/tokens
 # Use dumb-init as entrypoint to manage zombie processes
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 
-CMD ["sh", "-c", "rm -rf /app/tokens/**/SingletonLock && node index.js"]
+CMD ["sh", "-c", "rm -rf /app/tokens/**/SingletonLock && NODE_OPTIONS='--max-old-space-size=4096' node index.js"]

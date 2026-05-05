@@ -27,7 +27,9 @@ function logEvent(event, details = {}) {
 async function start() {
   logEvent('ENGINE_STARTUP', {
       free_mem: Math.round(os.freemem() / 1024 / 1024) + 'MB',
-      total_mem: Math.round(os.totalmem() / 1024 / 1024) + 'MB'
+      total_mem: Math.round(os.totalmem() / 1024 / 1024) + 'MB',
+      cores: os.cpus().length,
+      node_mem: process.memoryUsage().heapTotal / 1024 / 1024 + 'MB'
   });
 
   isReady = false;
@@ -40,7 +42,7 @@ async function start() {
       waitForLogin: false,
       tokenStore: 'file',
       folderNameToken: 'tokens',
-      headless: 'new',
+      headless: true, // Use original headless for better stability in Docker
       debug: false,
       logQR: true,
       whatsappVersion: '2.3000.1015901391',
@@ -57,20 +59,20 @@ async function start() {
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-software-rasterizer',
           '--disable-extensions',
           '--disable-features=site-per-process,IsolateOrigins',
           '--no-first-run',
           '--no-zygote',
-          '--window-size=1920,1080'
+          '--window-size=1920,1080',
+          '--disable-web-security',
+          '--allow-running-insecure-content',
+          '--user-data-dir=/app/tokens/browser_data'
         ],
       }
     });
 
     logEvent('CLIENT_INITIALIZED');
     
-    // SELECTIVE RESOURCE BLOCKING (RAM Optimization)
     if (client.page) {
         await client.page.setRequestInterception(true);
         client.page.on('request', (req) => {
@@ -83,7 +85,7 @@ async function start() {
 
         client.page.on('console', msg => {
             const text = msg.text();
-            if (text.includes('WPP') || text.includes('error')) {
+            if (text.includes('WPP') || text.includes('error') || text.includes('MasterDatabase')) {
                 console.log(`[Browser] ${text}`);
             }
         });
@@ -131,34 +133,20 @@ async function startHealthChecks() {
         if (!client || !client.page) return;
         
         try {
-            // 1. Browser Ping
             await Promise.race([
                 client.page.evaluate(() => 1 + 1),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Ping timeout')), 5000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Ping timeout')), 10000))
             ]);
             browserHealth = 'OK';
-
-            // 2. WhatsApp Conn Check
-            if (isReady) {
-                const isConn = await client.page.evaluate(() => {
-                    return typeof WPP !== 'undefined' && WPP.conn && WPP.conn.isMainConnected();
-                }).catch(() => false);
-                
-                if (!isConn && connectionStatus === 'CONNECTED') {
-                    logEvent('WHATSAPP_DISCONNECTED_INTERNAL');
-                    // We don't force restart here yet, let's see if it recovers
-                }
-            }
         } catch (e) {
             logEvent('BROWSER_HEALTH_CHECK_FAILED', { error: e.message });
             browserHealth = 'FROZEN';
-            // Force reload if frozen
             if (e.message.includes('Ping timeout')) {
                 logEvent('FORCING_PAGE_RELOAD');
                 client.page.reload().catch(() => {});
             }
         }
-    }, 60000); // Every minute
+    }, 45000); // Slightly more frequent
 }
 
 app.post('/send-message', async (req, res) => {
@@ -175,7 +163,6 @@ app.post('/send-message', async (req, res) => {
     const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
     logEvent('SEND_MESSAGE_START', { formattedPhone });
     
-    // Ensure WPP is ready
     const wppReady = await client.page.evaluate(() => typeof WPP !== 'undefined' && WPP.isReady).catch(() => false);
     if (!wppReady) {
         logEvent('WPP_NOT_READY_IN_PAGE');
@@ -191,13 +178,12 @@ app.post('/send-message', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     logEvent('SEND_MESSAGE_ERROR', { error: error.message, phone });
-    res.status(500).json({ error: error.message });
     
-    // If multiple timeouts, reload page
     if (error.message.includes('timeout')) {
         logEvent('RELOAD_ON_TIMEOUT');
         client.page.reload().catch(() => {});
     }
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -218,7 +204,8 @@ app.get('/health', (req, res) => {
     engine_status: connectionStatus,
     ready: isReady,
     browser_health: browserHealth,
-    free_mem: Math.round(os.freemem() / 1024 / 1024) + 'MB'
+    free_mem: Math.round(os.freemem() / 1024 / 1024) + 'MB',
+    node_heap: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
   });
 });
 
