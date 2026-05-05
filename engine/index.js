@@ -179,7 +179,12 @@ app.post('/send-message', async (req, res) => {
   // 1. WARM-UP & STALE CHECK
   let isConnectionStale = (now - lastSuccessfulSendTimestamp) > STALE_THRESHOLD_MS;
   if (isConnectionStale || connectionStatus !== 'CONNECTED') {
-    const isActuallyConnected = client ? await client.isConnected().catch(() => false) : false;
+    // Add a timeout to isConnected to avoid hanging the entire request
+    const isActuallyConnected = client ? await Promise.race([
+        client.isConnected(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('isConnected timeout')), 5000))
+    ]).catch(() => false) : false;
+    
     if (!isActuallyConnected) {
       connectionStatus = 'DISCONNECTED';
       return res.status(401).json({ error: 'Client not connected' });
@@ -209,6 +214,23 @@ app.post('/send-message', async (req, res) => {
       });
     lastSuccessfulSendTimestamp = Date.now();
     res.json({ success: true, note: 'Message dispatched' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/logout', async (req, res) => {
+  try {
+    if (client) {
+      await client.logout().catch(() => {});
+      await client.close().catch(() => {});
+      client = null;
+    }
+    connectionStatus = 'DISCONNECTED';
+    qrCode = null;
+    res.json({ success: true, message: 'Logged out. Engine will restart.' });
+    // Restart after a short delay
+    setTimeout(() => start(), 2000);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
