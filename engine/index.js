@@ -32,7 +32,7 @@ async function start() {
   try {
     client = await wppconnect.create({
       session: sessionName,
-      whatsappVersion: '2.3000.1014713444', // Hardcoded stable version
+      whatsappVersion: undefined, // Let latest wppconnect handle it
       autoClose: 3600000,
       waitForLogin: false,
       tokenStore: 'file',
@@ -76,11 +76,13 @@ async function start() {
         '--disable-breakpad',
         '--disable-ipv6',
         '--dns-prefetch-disable',
+        '--remote-debugging-port=9222',
+        '--window-size=1280,720',
         '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
       ],
       puppeteerOptions: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=9222'],
       }
     });
 
@@ -162,6 +164,16 @@ async function triggerSoftRecovery() {
 }
 
 // API Endpoints
+app.get('/screenshot', async (req, res) => {
+    if (!client || !client.page) return res.status(404).json({ error: 'Browser not active' });
+    try {
+        const screenshot = await client.page.screenshot({ type: 'png', fullPage: true });
+        res.set('Content-Type', 'image/png');
+        res.send(screenshot);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
 app.get('/health', (req, res) => {
   res.json({ 
