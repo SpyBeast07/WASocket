@@ -32,12 +32,14 @@ async function start() {
   try {
     client = await wppconnect.create({
       session: sessionName,
-      autoClose: 3600000, // 1 hour timeout (instead of 0 or 180s)
-      waitForLogin: false, // DON'T wait for login to resolve 'create'
+      whatsappVersion: '2.3000.1014713444', // Hardcoded stable version
+      autoClose: 3600000,
+      waitForLogin: false,
       tokenStore: 'file',
       disableWelcome: true,
       catchQR: (base64Qrimg, asciiQR, attempts, urlCode) => {
         qrCode = urlCode;
+        logEvent('QR_RECEIVED', { attempt: attempts });
         console.log(`\n--- SCAN THIS QR CODE (Attempt ${attempts}) ---\n`);
         console.log(asciiQR);
         console.log(`\n--------------------------------------------\n`);
@@ -74,9 +76,10 @@ async function start() {
         '--disable-breakpad',
         '--disable-ipv6',
         '--dns-prefetch-disable',
+        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
       ],
       puppeteerOptions: {
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
       }
     });
